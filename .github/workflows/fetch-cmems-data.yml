@@ -1,0 +1,117 @@
+name: fetch-cmems-data
+
+# WHY THIS EXISTS
+#
+# Claude's sandbox sits behind an egress allowlist and cannot reach
+# data.marine.copernicus.eu. A GitHub Actions runner has open internet.
+# So the download that Claude cannot do, your CI can -- and your credentials
+# stay in GitHub's encrypted secret store instead of being pasted into a
+# chat window or committed to the repo.
+#
+# SETUP (once)
+#   Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#     CMEMS_USERNAME   your Copernicus Marine username
+#     CMEMS_PASSWORD   your Copernicus Marine password
+#
+# RUN
+#   Actions tab -> fetch-cmems-data -> Run workflow -> set the inputs
+#
+# The subset is uploaded as a build artifact you can download and then upload
+# to Claude, or commit to a data branch if it is small enough.
+#
+# WARNING: every dataset_id below is UNVERIFIED. Check it against the live
+# Copernicus Marine catalogue first. The workflow prints the catalogue entry
+# before downloading so you can see what you actually got.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_id:
+        description: "CMEMS dataset ID (verify in the catalogue first)"
+        required: true
+        default: "cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D"
+      variables:
+        description: "Comma-separated variable names, e.g. CHL"
+        required: true
+        default: "CHL"
+      bbox:
+        description: "west,south,east,north"
+        required: true
+        default: "-6,43,-1,48"
+      start:
+        description: "start date YYYY-MM-DD"
+        required: true
+        default: "1998-01-01"
+      end:
+        description: "end date YYYY-MM-DD"
+        required: true
+        default: "2024-12-31"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install toolbox
+        run: |
+          python -m pip install --upgrade pip
+          pip install copernicusmarine xarray netCDF4 zarr dask
+
+      - name: Describe the dataset before downloading
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.CMEMS_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.CMEMS_PASSWORD }}
+        run: |
+          copernicusmarine describe \
+            --contains "${{ inputs.dataset_id }}" || \
+            echo "describe failed -- the dataset ID is probably wrong"
+
+      - name: Subset and download
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.CMEMS_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.CMEMS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r W S E N <<< "${{ inputs.bbox }}"
+          mkdir -p data
+          VARS=""
+          IFS=',' read -ra V <<< "${{ inputs.variables }}"
+          for v in "${V[@]}"; do VARS="$VARS -v $v"; done
+
+          copernicusmarine subset \
+            -i "${{ inputs.dataset_id }}" \
+            $VARS \
+            -x "$W" -X "$E" -y "$S" -Y "$N" \
+            -t "${{ inputs.start }}T00:00:00" \
+            -T "${{ inputs.end }}T23:59:59" \
+            -o data -f subset.nc \
+            --force-download
+
+      - name: Report what we got
+        run: |
+          python - <<'PY'
+          import xarray as xr, os
+          ds = xr.open_dataset("data/subset.nc")
+          print(ds)
+          mb = os.path.getsize("data/subset.nc") / 1e6
+          print(f"\nfile size: {mb:.1f} MB")
+          for c in ("time", "latitude", "longitude", "lat", "lon"):
+              if c in ds.coords:
+                  print(f"{c}: {ds[c].size} steps, "
+                        f"{ds[c].values.min()} .. {ds[c].values.max()}")
+          for v in ds.data_vars:
+              frac = float(ds[v].isnull().mean())
+              print(f"{v}: {frac:.1%} missing  <- cloud gaps if this is ocean colour")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmems-subset
+          path: data/subset.nc
+          retention-days: 14

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# large local data caches - never commit these
+data/
+*.nc
+*.zarr/
+*.grib
+
+# generated artefacts: outputs/ IS committed on purpose so the README
+# figure renders on the GitHub landing page. If the repo gets noisy with
+# diffs, uncomment the next line and publish figures via CI artefacts.
+# outputs/

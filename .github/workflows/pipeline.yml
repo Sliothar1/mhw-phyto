@@ -1,0 +1,53 @@
+name: pipeline
+
+# Runs the whole thing on every push. The green tick on the repo landing page
+# is the cheapest credibility you will ever buy at a hackathon, and the
+# uploaded figure means a judge can see output without cloning anything.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas xarray scipy scikit-learn matplotlib netCDF4 pytest
+
+      - name: Unit tests
+        run: python -m pytest tests -q
+
+      - name: Cross-validate against reference implementation
+        run: python scripts/validate_against_reference.py --ref-path vendor
+
+      - name: End-to-end walking skeleton
+        run: python scripts/run_walking_skeleton.py
+
+      - name: Publish figures and tables
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-outputs
+          path: outputs/
+          retention-days: 30
+
+      - name: Summary for the run page
+        if: always()
+        run: |
+          echo "## Pipeline results" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat outputs/summary.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Figures are attached to this run as the *pipeline-outputs* artifact." \
+            >> $GITHUB_STEP_SUMMARY

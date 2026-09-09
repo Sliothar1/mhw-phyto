@@ -1,0 +1,15 @@
+{
+  "source": "synthetic",
+  "n_events": 2094,
+  "mean_duration_days": 13.0792741165234,
+  "regime_counts": {
+    "down": 15,
+    "up": 15,
+    "none": 6
+  },
+  "mean_forecast_skill": 0.1272592873386668,
+  "ground_truth_check": {
+    "accuracy": 1.0,
+    "n_cells": 36
+  }
+}
